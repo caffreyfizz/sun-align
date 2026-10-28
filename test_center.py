@@ -8,19 +8,31 @@ image = cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)          # серая копия
 def find_center_x(img, t, step=8):
     mids = []
     lengths = []
-    for y in range(0, len(img), step):
+    last = img.shape[1] - 1
+    prev_cut = False
+
+    for y in range(0, img.shape[0], step):
         row = img[y].tolist()
 
+        # хорда упирается в левый или правый край кадра
+        if row[0] > t or row[last] > t:
+            if prev_cut:
+                side = "слева" if row[0] > t else "справа"
+                print("обработка невозможна: солнце за краем", side)
+                return None
+            prev_cut = True
+            continue
+        prev_cut = False
+
         left = None
-        for i in range(1, len(row)):
+        for i in range(1, last + 1):
             if row[i] > t:
                 left = (i - 1) + (t - row[i - 1]) / (row[i] - row[i - 1])
                 break
         if left is None:
             continue
 
-        right = None
-        for i in range(len(row) - 2, -1, -1):
+        for i in range(last - 1, -1, -1):
             if row[i] > t:
                 right = i + (t - row[i]) / (row[i + 1] - row[i])
                 break
@@ -28,10 +40,14 @@ def find_center_x(img, t, step=8):
         mids.append((left + right) / 2)
         lengths.append(right - left)
 
-    longest = max(lengths)
+    if not lengths:
+        print("обработка невозможна: солнце не найдено")
+        return None
+
+    half = max(lengths) / 2
     good = []
     for k in range(len(mids)):
-        if lengths[k] > longest / 2:
+        if lengths[k] > half:
             good.append(mids[k])
     return good
 
@@ -39,19 +55,31 @@ def find_center_x(img, t, step=8):
 def find_center_y(img, t, step=8):
     mids = []
     lengths = []
-    for x in range(0, len(img[0]), step):
+    last = img.shape[0] - 1
+    prev_cut = False
+
+    for x in range(0, img.shape[1], step):
         col = img[:, x].tolist()
 
+        # хорда упирается в верхний или нижний край кадра
+        if col[0] > t or col[last] > t:
+            if prev_cut:
+                side = "сверху" if col[0] > t else "снизу"
+                print("обработка невозможна: солнце за краем", side)
+                return None
+            prev_cut = True
+            continue
+        prev_cut = False
+
         top = None
-        for i in range(1, len(col)):
+        for i in range(1, last + 1):
             if col[i] > t:
                 top = (i - 1) + (t - col[i - 1]) / (col[i] - col[i - 1])
                 break
         if top is None:
             continue
 
-        bottom = None
-        for i in range(len(col) - 2, -1, -1):
+        for i in range(last - 1, -1, -1):
             if col[i] > t:
                 bottom = i + (t - col[i]) / (col[i + 1] - col[i])
                 break
@@ -59,10 +87,14 @@ def find_center_y(img, t, step=8):
         mids.append((top + bottom) / 2)
         lengths.append(bottom - top)
 
-    longest = max(lengths)
+    if not lengths:
+        print("обработка невозможна: солнце не найдено")
+        return None
+
+    half = max(lengths) / 2
     good = []
     for k in range(len(mids)):
-        if lengths[k] > longest / 2:
+        if lengths[k] > half:
             good.append(mids[k])
     return good
 
@@ -116,9 +148,13 @@ for t in range(256):
 t_best = (t_low + t_high) // 2
 
 medians_x = find_center_x(image, t_best)
+if medians_x is None:
+    exit()
 center_x = sorted(medians_x)[len(medians_x) // 2]
 
 medians_y = find_center_y(image, t_best)
+if medians_y is None:
+    exit()
 center_y = sorted(medians_y)[len(medians_y) // 2]
 
 
