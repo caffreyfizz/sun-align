@@ -3,10 +3,10 @@ import os
 import cv2
 import numpy as np
  
-INPUT_DIR = "Solar_figna/2026_03"      
-OUTPUT_DIR = "Solar_figna/2026_03_result"
+INPUT_DIR = "Solar_figna/2026_07"      
+OUTPUT_DIR = "Solar_figna/2026_07_result"
 
-ANGLES = [0, 3.5, -5.89, 8.3, -2.9, 6.33, -9.4, 4.1, -7, 10.5, -4.75, 2.12]
+ANGLES = [0, 3.5, -5.89, 83, -2.9, 6.33, -9.4, 4.1, -7, 10.5, -4.75, 30.12]
 
 
 RINGS = list(np.linspace(0.70, 0.95, 12)) + list(np.linspace(1.04, 1.20, 18))
@@ -128,26 +128,47 @@ def find_sun(image):
 
 # Интерполяция
 
-def sample(img, xs, ys):
+CUBIC_A = -0.75
 
+def cubic_weights(t, a=CUBIC_A):
+    # Веса 4 соседних пикселей (слева-1, слева, справа, справа+1) для дробной части t.
+    t2 = t * t
+    t3 = t * t * t
+    return [a * t3 - 2 * a * t2 + a * t,
+            (a + 2) * t3 - (a + 3) * t2 + 1,
+            -(a + 2) * t3 + (2 * a + 3) * t2 - a * t,
+            -a * t3 + a * t2]
+ 
+ 
+def sample_cubic(img, xs, ys):
+    # 16 соседних пикселей с кубическими весами.
     h, w = img.shape[:2]
+
     inside = (xs >= 0) & (xs <= w - 1) & (ys >= 0) & (ys <= h - 1)
-    x0 = np.clip(np.floor(xs).astype(int), 0, w - 2)
-    y0 = np.clip(np.floor(ys).astype(int), 0, h - 2)
-    fx = np.clip(xs - x0, 0, 1)                              #вес правого соседа
-    fy = np.clip(ys - y0, 0, 1)                                   #вес верхнего соседа
 
+    x0 = np.floor(xs).astype(int)
+    y0 = np.floor(ys).astype(int)
+
+    wx = cubic_weights(xs - x0)
+    wy = cubic_weights(ys - y0)
+
+ 
     if img.ndim == 3:
-        fx, fy, inside = fx[..., None], fy[..., None], inside[..., None]
+        wx = [v[..., None] for v in wx]
+        wy = [v[..., None] for v in wy]
+        inside = inside[..., None]
+ 
+    result = 0.0
+    for j in range(4):
+        yi = np.clip(y0 - 1 + j, 0, h - 1)
+        row = 0.0
+        for i in range(4):
+            xi = np.clip(x0 - 1 + i, 0, w - 1)
+            row = row + wx[i] * img[yi, xi]
 
-
-    top = img[y0, x0] * (1 - fx) + img[y0, x0 + 1] * fx
-
-    bottom = img[y0 + 1, x0] * (1 - fx) + img[y0 + 1, x0 + 1] * fx
-
-    result = top * (1 - fy) + bottom * fy
-
-    return np.where(inside, result , 0)
+        result = result + wy[j] * row
+ 
+    return np.where(inside, result, 0)
  
 # Поворот кадра
 def rotate(img, angle, center, new_center):
@@ -162,7 +183,7 @@ def rotate(img, angle, center, new_center):
     src_x = center[0] + u * np.cos(a) + v * np.sin(a)     # src_y = center[0] + u_src
     src_y = center[1] - (-u * np.sin(a) + v * np.cos(a))  # src_y = center[1] − v_src
 
-    return sample(img, src_x, src_y).round().clip(0, 255).astype(np.uint8)
+    return sample_cubic(img, src_x, src_y).round().clip(0, 255).astype(np.uint8)
  
 
 
@@ -174,7 +195,7 @@ def ring_profiles(gray, sun):
     phi = 2 * np.pi * np.arange(N) / N
     profiles = []
     for f in RINGS:
-        p = sample(np.log1p(gray.astype(np.float64)),
+        p = sample_cubic(np.log1p(gray.astype(np.float64)),
                    cx + f * radius * np.cos(phi), cy - f * radius * np.sin(phi))
 
         # Центрируем данные
@@ -190,9 +211,9 @@ def pair_angle(base, image):
     
     corr = np.zeros(N)
     for s in range(N):               # корреляция при циклическом сдвиге на s точек
-        corr[s] = (image * np.roll(base, s, axis=1)).mean()
+        corr[s] = corr[s] = np.sum(np.sqrt((image - np.roll(base, s, axis=1))**2))
 
-    s = int(np.argmax(corr))
+    s = int(np.argmin(corr))
 
 
     if s > N / 2:
@@ -225,22 +246,26 @@ suns = [(s[0], s[1], radius) for s in suns]
 
 profiles = [ring_profiles(g, s) for g, s in zip(grays, suns)]
 
-# M = np.zeros((n, n))
+# theta = np.zeros(n)
+# theta[0] = 0
+# for i in range(1, n):
+#     theta[i] = pair_angle(profiles[0], profiles[i])
 
-# for i in range(n):
-#     for j in range(i + 1, n):
-#         M[i, j] = pair_angle(profiles[i], profiles[j])
-#         M[j, i] = -M[i, j]
+# theta = theta - theta[0]
 
-
-# theta = M.mean(axis=0)
-
-theta = np.zeros(n)
-theta[0] = 0
-for i in range(1, n):
-    theta[i] = pair_angle(profiles[0], profiles[i])
-
+M = np.zeros((n, n))
+for i in range(n):
+    for j in range(i + 1, n):
+        M[i, j] = pair_angle(profiles[i], profiles[j])
+        M[j, i] = -M[i, j]
+ 
+# Угол каждого кадра - среднее по всем парам.
+# M[i, j] ~ theta_j - theta_i (на диагонали 0), поэтому среднее по i даёт theta_j - mean(theta);
+# вычитаем значение первого кадра, чтобы theta_0 = 0.
+theta = M.mean(axis=0)
 theta = theta - theta[0]
+
+
 
 
 print("\nкадр  задано  найдено  ошибка")
