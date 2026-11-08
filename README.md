@@ -445,6 +445,5 @@ sun-align/
 
 **Авторы:** Никита Юсько ([@caffreyfizz](https://github.com/caffreyfizz)) — центрирование, отбраковка, конвейер и метрики · [@MolecularBicycle](https://github.com/MolecularBicycle) — поиск угла и поворот
 
-Изображения Солнца: NASA/SDO и научная группа AIA.
 
 </div>
