@@ -1,213 +1,124 @@
+
+import os
+import glob
 import cv2
 import numpy as np
 
-color = cv2.imread("pictures/image.png")                  # цветной кадр (h, w, 3)
-image = cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)          # серая копия для расчётов
+SHOW = True            
+MAX_SIZE = 900         
+DEBUG_FOLDER = "debug" 
+ 
+ 
+def _to_uint8_bgr(image):
+    img = np.asarray(image)
+    if img.dtype != np.uint8:
+        img = img.astype(np.float32)
+        lo, hi = float(img.min()), float(img.max())
+        img = (img - lo) / (hi - lo) * 255 if hi > lo else np.zeros_like(img)
+        img = img.astype(np.uint8)
+    if img.ndim == 2:
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    elif img.shape[2] == 4:
+        img = cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+    return img
+ 
+ 
+def _gui_available():
+    if os.name == "nt" or os.uname().sysname == "Darwin":
+        return True
+    return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+ 
+ 
+def show_image(image, title="image", wait=True):
+    if not SHOW:
+        return
+    img = _to_uint8_bgr(image)
+    h, w = img.shape[:2]
+    scale = min(1.0, MAX_SIZE / max(h, w))
+    if scale < 1.0:
+        img = cv2.resize(img, (int(w * scale), int(h * scale)),
+                         interpolation=cv2.INTER_AREA)
+    if _gui_available():
+        try:
+            cv2.imshow(title, img)
+            if wait:
+                cv2.waitKey(0)
+                cv2.destroyWindow(title)
+            else:
+                cv2.waitKey(1)
+            return
+        except cv2.error:   # opencv-python-headless
+            pass
+    os.makedirs(DEBUG_FOLDER, exist_ok=True)
+    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in title)
+    path = os.path.join(DEBUG_FOLDER, f"{safe}.png")
+    cv2.imwrite(path, img)
+    print(f"[show_image] окно недоступно, сохранено: {path}")
+ 
+ 
+def show_compare(before, after, title="до | после", wait=True):
+    """Показывает 'до' и 'после' рядом с подписями."""
+    if not SHOW:
+        return
+    a, b = _to_uint8_bgr(before), _to_uint8_bgr(after)
+    h = min(a.shape[0], b.shape[0])
+    a = cv2.resize(a, (int(a.shape[1] * h / a.shape[0]), h))
+    b = cv2.resize(b, (int(b.shape[1] * h / b.shape[0]), h))
+    for img, text in ((a, "before"), (b, "after")):
+        cv2.putText(img, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0,
+                    (0, 255, 255), 2, cv2.LINE_AA)
+    show_image(np.hstack([a, b]), title, wait)
+ 
+
+INPUT_FOLDER = "pictures"
+OUTPUT_FOLDER = "aligned"
 
 
-def find_center_x(img, t, step=8):
-    mids = []
-    lengths = []
-    last = img.shape[1] - 1
-    prev_cut = False
+def find_sun_center(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+    threshold, mask = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
 
-    for y in range(0, img.shape[0], step):
-        row = img[y].tolist()
+    show_image(mask, "маска Солнца")
+     
+    contours, hierarchy = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    biggest = max(contours, key=cv2.contourArea)
 
-        # хорда упирается в левый или правый край кадра
-        if row[0] > t or row[last] > t:
-            if prev_cut:
-                side = "слева" if row[0] > t else "справа"
-                print("обработка невозможна: солнце за краем", side)
-                return None
-            prev_cut = True
-            continue
-        prev_cut = False
-
-        left = None
-        for i in range(1, last + 1):
-            if row[i] > t:
-                left = (i - 1) + (t - row[i - 1]) / (row[i] - row[i - 1])
-                break
-        if left is None:
-            continue
-
-        for i in range(last - 1, -1, -1):
-            if row[i] > t:
-                right = i + (t - row[i]) / (row[i + 1] - row[i])
-                break
-
-        mids.append((left + right) / 2)
-        lengths.append(right - left)
-
-    if not lengths:
-        print("обработка невозможна: солнце не найдено")
-        return None
-
-    half = max(lengths) / 2
-    good = []
-    for k in range(len(mids)):
-        if lengths[k] > half:
-            good.append(mids[k])
-    return good
+    (center_x, center_y), radius = cv2.minEnclosingCircle(biggest)
+    return center_x, center_y
 
 
-def find_center_y(img, t, step=8):
-    mids = []
-    lengths = []
-    last = img.shape[0] - 1
-    prev_cut = False
-
-    for x in range(0, img.shape[1], step):
-        col = img[:, x].tolist()
-
-        # хорда упирается в верхний или нижний край кадра
-        if col[0] > t or col[last] > t:
-            if prev_cut:
-                side = "сверху" if col[0] > t else "снизу"
-                print("обработка невозможна: солнце за краем", side)
-                return None
-            prev_cut = True
-            continue
-        prev_cut = False
-
-        top = None
-        for i in range(1, last + 1):
-            if col[i] > t:
-                top = (i - 1) + (t - col[i - 1]) / (col[i] - col[i - 1])
-                break
-        if top is None:
-            continue
-
-        for i in range(last - 1, -1, -1):
-            if col[i] > t:
-                bottom = i + (t - col[i]) / (col[i + 1] - col[i])
-                break
-
-        mids.append((top + bottom) / 2)
-        lengths.append(bottom - top)
-
-    if not lengths:
-        print("обработка невозможна: солнце не найдено")
-        return None
-
-    half = max(lengths) / 2
-    good = []
-    for k in range(len(mids)):
-        if lengths[k] > half:
-            good.append(mids[k])
-    return good
-
-
-# Гистограмма: сколько пикселей каждой яркости
-hist = [0] * 256
-for row in image:
-    for v in row.tolist():
-        hist[v] += 1
-
-# Общие величины
-N = 0
-S = 0
-for v in range(256):
-    N += hist[v]
-    S += v * hist[v]
-
-''' σ²(t) = w₀ · w₁ · (μ₀ − μ₁)²  - Перебор порогов
-w₀, w₁ — доля пикселей в каждом классе;
-μ₀, μ₁ — средняя яркость каждого класса;
-(μ₀ - μ₁)² — насколько далеко друг от друга средние;
-w₀ · w₁ — штраф за перекос'''
-
-n0 = 0    #сколько пикселей в классе 0
-s0 = 0    # суммарная якрость пикселей в классе 0
-best_sigma = -1.0
-t_low = 0
-t_high = 0
-
-for t in range(256):
-    n0 += hist[t]
-    s0 += t * hist[t]
-    n1 = N - n0
-
-    if n0 == 0:
-        continue
-    if n1 == 0:
-        break
-
-    q0 = s0 / n0
-    q1 = (S - s0) / n1
-    sigma = n0 * n1 * (q0 - q1) ** 2
-
-    if sigma > best_sigma:
-        best_sigma = sigma
-        t_low = t
-        t_high = t
-    elif sigma == best_sigma:
-        t_high = t
-
-t_best = (t_low + t_high) // 2
-
-medians_x = find_center_x(image, t_best)
-if medians_x is None:
-    exit()
-center_x = sorted(medians_x)[len(medians_x) // 2]
-
-medians_y = find_center_y(image, t_best)
-if medians_y is None:
-    exit()
-center_y = sorted(medians_y)[len(medians_y) // 2]
-
-
-def shift_image(img, dx, dy):
-    height, width = img.shape[:2]
-    result = np.zeros_like(img)
-    if abs(dx) >= width or abs(dy) >= height:
-        return result
-
-    # какие строки и столбцы исходного кадра попадут в новый
-    src_y0 = max(0, -dy)    # первый индекс исходника, который попадёт в новый кадр
-    src_y1 = min(height, height - dy)     # последний индекс исходника, который попадёт в новый кадр
-    src_x0 = max(0, -dx)
-    src_x1 = min(width, width - dx)
-
-    result[src_y0 + dy: src_y1 + dy, src_x0 + dx: src_x1 + dx] = img[src_y0:src_y1, src_x0:src_x1]
+def move_sun_to_center(image, center_x, center_y, base_center_x, base_center_y):
+    height, width = image.shape[:2]
+    shift_x = base_center_x - center_x
+    shift_y = base_center_y - center_y
+    
+    matrix = np.float32([[1, 0, shift_x],
+                         [0, 1, shift_y]])
+    result = cv2.warpAffine(image, matrix, (width, height))
+    show_compare(image, result, "сдвиг")
     return result
 
 
-height, width = image.shape
-target_x = (width - 1) / 2
-target_y = (height - 1) / 2
+os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+paths = glob.glob(os.path.join(INPUT_FOLDER, "*.png"))
 
-dx = round(target_x - center_x)
-dy = round(target_y - center_y)
-result = shift_image(color, dx, dy)
-print("сдвиг:", dx, dy)
+base_image = cv2.imread(paths[0])
+base_center_x, base_center_y = find_sun_center(base_image)
+print(f"base:  x={base_center_x:.2f}, y={base_center_y:.2f}")
 
-# проверка: где центр после сдвига
-result_gray = cv2.cvtColor(result, cv2.COLOR_BGR2GRAY)
-new_medians_x = find_center_x(result_gray, t_best)
-new_medians_y = find_center_y(result_gray, t_best)
+for path in paths[1:]:
+    image = cv2.imread(path)
 
-new_x = sorted(new_medians_x)[len(new_medians_x) // 2]
-new_y = sorted(new_medians_y)[len(new_medians_y) // 2]
+    center_x, center_y = find_sun_center(image)
+    result = move_sun_to_center(image, center_x, center_y, base_center_x, base_center_y)
 
-print("стало:", new_x, new_y, "цель:", target_x, target_y)
-
-cv2.imwrite("pictures/image_centered.png", result)
+    #Check the new center after moving
+    new_x, new_y = find_sun_center(result)
+    print(f"было ({center_x:.2f}, {center_y:.2f})  ->  стало ({new_x:.2f}, {new_y:.2f})")
 
 
-#отображение
-left = color.copy()
-right = result.copy()
 
-cx_mark, cy_mark = int(round(target_x)), int(round(target_y))
-for pic in (left, right):
-    cv2.line(pic, (cx_mark - 25, cy_mark), (cx_mark + 25, cy_mark), (0, 0, 255), 2)
-    cv2.line(pic, (cx_mark, cy_mark - 25), (cx_mark, cy_mark + 25), (0, 0, 255), 2)
-
-view = np.hstack((left, right))
-view = cv2.resize(view, (view.shape[1] // 2, view.shape[0] // 2))
-
-cv2.imshow("left: original, right: centered", view)
-cv2.waitKey(0)
-cv2.destroyAllWindows()
+    file_name = os.path.basename(path)
+    cv2.imwrite(os.path.join(OUTPUT_FOLDER, file_name), result)
+    print(file_name, "готово")

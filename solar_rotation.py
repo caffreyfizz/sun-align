@@ -1,81 +1,7 @@
-import os
- 
-import cv2
 import numpy as np
- 
-INPUT_DIR = "Solar_figna/2026_07"      
-OUTPUT_DIR = "Solar_figna/2026_07_result"
-
-ANGLES = [0, 3.5, -5.89, 83, -2.9, 6.33, -9.4, 4.1, -7, 10.5, -4.75, 30.12]
+from solar_center import find_center_x, find_center_y
 
 
-RINGS = list(np.linspace(0.70, 0.95, 12)) + list(np.linspace(1.04, 1.20, 18))
-
-N = 720                     # точек на кольце (шаг 0.5 градуса)
- 
-
-def find_center_x(img, t, step=8):
-    mids = []
-    lengths = []
-    for y in range(0, len(img), step):
-        row = img[y].tolist()
- 
-        left = None
-        for i in range(1, len(row)):
-            if row[i] > t:
-                left = (i - 1) + (t - row[i - 1]) / (row[i] - row[i - 1])
-                break
-        if left is None:
-            continue
- 
-        right = None
-        for i in range(len(row) - 2, -1, -1):
-            if row[i] > t:
-                right = i + (t - row[i]) / (row[i + 1] - row[i])
-                break
- 
-        mids.append((left + right) / 2)
-        lengths.append(right - left)
- 
-    longest = max(lengths)
-    good = []
-    for k in range(len(mids)):
-        if lengths[k] > longest / 2:
-            good.append(mids[k])
-    return good
- 
- 
-def find_center_y(img, t, step=8):
-    mids = []
-    lengths = []
-    for x in range(0, len(img[0]), step):
-        col = img[:, x].tolist()
- 
-        top = None
-        for i in range(1, len(col)):
-            if col[i] > t:
-                top = (i - 1) + (t - col[i - 1]) / (col[i] - col[i - 1])
-                break
-        if top is None:
-            continue
- 
-        bottom = None
-        for i in range(len(col) - 2, -1, -1):
-            if col[i] > t:
-                bottom = i + (t - col[i]) / (col[i + 1] - col[i])
-                break
- 
-        mids.append((top + bottom) / 2)
-        lengths.append(bottom - top)
- 
-    longest = max(lengths)
-    good = []
-    for k in range(len(mids)):
-        if lengths[k] > longest / 2:
-            good.append(mids[k])
-    return good
- 
- 
 def find_sun(image):
     """Центр (x, y) и радиус Солнца по серому кадру."""
     # Гистограмма: сколько пикселей каждой яркости
@@ -124,13 +50,9 @@ def find_sun(image):
     # радиус: из площади диска (число пикселей ярче порога)
     radius = (np.count_nonzero(image > t_best) / np.pi) ** 0.5
     return center_x, center_y, radius
- 
 
-# Интерполяция
 
-CUBIC_A = -0.75
-
-def cubic_weights(t, a=CUBIC_A):
+def cubic_weights(t, a=-0.75):
     # Веса 4 соседних пикселей (слева-1, слева, справа, справа+1) для дробной части t.
     t2 = t * t
     t3 = t * t * t
@@ -189,7 +111,7 @@ def rotate(img, angle, center, new_center):
 
 # Создание профилей для линейной корреляции
 
-def ring_profiles(gray, sun):
+def ring_profiles(gray, sun, N, RINGS):
 
     cx, cy, radius = sun
     phi = 2 * np.pi * np.arange(N) / N
@@ -207,7 +129,7 @@ def ring_profiles(gray, sun):
  
 #Циклическая корреляция base c каждым изображением 
 
-def pair_angle(base, image):
+def pair_angle(base, image, N):
     
     corr = np.zeros(N)
     for s in range(N):               # корреляция при циклическом сдвиге на s точек
@@ -218,66 +140,4 @@ def pair_angle(base, image):
 
     if s > N / 2:
         s -= N
-
-    return s * 360 / N
- 
-
-# Основная часть
-
-names = sorted(os.listdir(INPUT_DIR))
-n = len(names)
-if n != len(ANGLES):
-    raise SystemExit(f"В папке {n} кадров, а в ANGLES {len(ANGLES)} углов")
- 
-# Читаем и поворачиваем вокруг центра кадра
-frames = [cv2.imread(os.path.join(INPUT_DIR, name)) for name in names]
-h, w = frames[0].shape[:2]
-frame_center = ((w - 1) / 2, (h - 1) / 2)
-rotated = [rotate(f, a, frame_center, frame_center) if a != 0 else f
-           for f, a in zip(frames, ANGLES)]
- 
-# Для всех кадров находим Солнце, делаем общий радиус
-grays = [cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) for f in rotated]
-suns = [find_sun(g) for g in grays]
-radius = float(np.median([s[2] for s in suns]))
-suns = [(s[0], s[1], radius) for s in suns]
- 
-# Найденный угол
-
-profiles = [ring_profiles(g, s) for g, s in zip(grays, suns)]
-
-# theta = np.zeros(n)
-# theta[0] = 0
-# for i in range(1, n):
-#     theta[i] = pair_angle(profiles[0], profiles[i])
-
-# theta = theta - theta[0]
-
-M = np.zeros((n, n))
-for i in range(n):
-    for j in range(i + 1, n):
-        M[i, j] = pair_angle(profiles[i], profiles[j])
-        M[j, i] = -M[i, j]
- 
-# Угол каждого кадра - среднее по всем парам.
-# M[i, j] ~ theta_j - theta_i (на диагонали 0), поэтому среднее по i даёт theta_j - mean(theta);
-# вычитаем значение первого кадра, чтобы theta_0 = 0.
-theta = M.mean(axis=0)
-theta = theta - theta[0]
-
-
-
-
-print("\nкадр  задано  найдено  ошибка")
-for i in range(n):
-
-    aligned = rotate(rotated[i], -theta[i], suns[i][:2], frame_center)
-
-    cv2.imwrite(os.path.join(OUTPUT_DIR, "rotated_" + names[i]), rotated[i])
-    cv2.imwrite(os.path.join(OUTPUT_DIR, "aligned_" + names[i]), aligned)
-
-    expected = ANGLES[i] - ANGLES[0]
-
-    print(f"{i + 1:>4}  {expected:>+6.1f}  {theta[i]:>+7.2f}  {theta[i] - expected:>+6.2f}")
-
-print(f"\nГотово: {n} кадров записано в папку {OUTPUT_DIR}")
+        return s * 360 / N
