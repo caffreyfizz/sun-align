@@ -1,5 +1,5 @@
 from solar_center import find_center_x, find_center_y, shift_image, find_otsu_threshold
-from solar_rotation import *
+from solar_rotation import rotate, ring_profiles, pair_angle
 import cv2
 import numpy as np
 import os
@@ -8,10 +8,12 @@ import os
 color = cv2.imread("pictures/20260301_001741_aia304.jpg")                  # цветной кадр (h, w, 3)
 image = cv2.cvtColor(color, cv2.COLOR_BGR2GRAY)          # серая копия для расчётов
 
+os.makedirs("centered_pictures", exist_ok=True)
+
 #----------------------------------image to center-------------------------------------#
 
 
-center_x, center_y, t_best = find_otsu_threshold(image)
+center_x, center_y, t_best, _ = find_otsu_threshold(image)
 
 
 height, width = image.shape
@@ -60,8 +62,8 @@ cv2.destroyAllWindows()'''
 #----------------------------------------rotation------------------------------------------#
 
 
-INPUT_DIR = "/centered_pictures"      
-OUTPUT_DIR = "/aligned_pictures"
+INPUT_DIR = "centered_pictures"      
+OUTPUT_DIR = "aligned_pictures"
 
 ANGLES = [0, 3.5, -5.89, 83, -2.9, 6.33, -9.4, 4.1, -7, 10.5, -4.75, 30.12]
 
@@ -86,7 +88,10 @@ rotated = [rotate(f, a, frame_center, frame_center) if a != 0 else f
 
 # Для всех кадров находим Солнце, делаем общий радиус
 grays = [cv2.cvtColor(f, cv2.COLOR_BGR2GRAY) for f in rotated]
-suns = [find_sun(g) for g in grays]
+suns = []
+for g in grays:
+    c_x, c_y, _, radius = find_otsu_threshold(g)
+    suns.append((c_x, c_y, radius))
 radius = float(np.median([s[2] for s in suns]))
 suns = [(s[0], s[1], radius) for s in suns]
  

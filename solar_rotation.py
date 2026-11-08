@@ -1,55 +1,4 @@
 import numpy as np
-from solar_center import find_center_x, find_center_y
-
-
-def find_sun(image):
-    """Центр (x, y) и радиус Солнца по серому кадру."""
-    # Гистограмма: сколько пикселей каждой яркости
-    hist = [0] * 256
-    for row in image:
-        for v in row.tolist():
-            hist[v] += 1
- 
-    # Общие величины
-    total = 0
-    S = 0
-    for v in range(256):
-        total += hist[v]
-        S += v * hist[v]
- 
-    # Порог Оцу: sigma(t) = n0 * n1 * (q0 - q1)^2, перебор порогов
-    n0 = 0
-    s0 = 0
-    best_sigma = -1.0
-    t_low = 0
-    t_high = 0
-    for t in range(256):
-        n0 += hist[t]
-        s0 += t * hist[t]
-        n1 = total - n0
-        if n0 == 0:
-            continue
-        if n1 == 0:
-            break
-        q0 = s0 / n0
-        q1 = (S - s0) / n1
-        sigma = n0 * n1 * (q0 - q1) ** 2
-        if sigma > best_sigma:
-            best_sigma = sigma
-            t_low = t
-            t_high = t
-        elif sigma == best_sigma:
-            t_high = t
-    t_best = (t_low + t_high) // 2
- 
-    medians_x = find_center_x(image, t_best)
-    center_x = sorted(medians_x)[len(medians_x) // 2]
-    medians_y = find_center_y(image, t_best)
-    center_y = sorted(medians_y)[len(medians_y) // 2]
- 
-    # радиус: из площади диска (число пикселей ярче порога)
-    radius = (np.count_nonzero(image > t_best) / np.pi) ** 0.5
-    return center_x, center_y, radius
 
 
 def cubic_weights(t, a=-0.75):
@@ -116,9 +65,9 @@ def ring_profiles(gray, sun, N, RINGS):
     cx, cy, radius = sun
     phi = 2 * np.pi * np.arange(N) / N
     profiles = []
+    log = np.log1p(gray.astype(np.float64))
     for f in RINGS:
-        p = sample_cubic(np.log1p(gray.astype(np.float64)),
-                   cx + f * radius * np.cos(phi), cy - f * radius * np.sin(phi))
+        p = sample_cubic(log, cx + f * radius * np.cos(phi), cy - f * radius * np.sin(phi))
 
         # Центрируем данные
         p = p - p.mean()
@@ -140,4 +89,4 @@ def pair_angle(base, image, N):
 
     if s > N / 2:
         s -= N
-        return s * 360 / N
+    return s * 360 / N
