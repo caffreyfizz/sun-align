@@ -53,15 +53,17 @@ def find_otsu_threshold(image):
 
     medians_x = find_center_x(image, t_best)
     if medians_x is None:
-        exit()
+        return None
     center_x = sorted(medians_x)[len(medians_x) // 2]
 
     medians_y = find_center_y(image, t_best)
     if medians_y is None:
-        exit()
+        return None
     center_y = sorted(medians_y)[len(medians_y) // 2]
 
-    return center_x, center_y, t_best
+    radius = (np.count_nonzero(image > t_best) / np.pi) ** 0.5
+
+    return center_x, center_y, t_best, radius
 
 
 def find_center_x(img, t, step=8):
